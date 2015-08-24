@@ -7,18 +7,18 @@ import (
 // Mutex is a pollable, waitable mutual exclusion facility.  It is non-re-entrant
 // and does not check release callers.
 type Mutex interface {
-	
+
 	// Lock attempts to block indefinitely until the mutex can lock.  Returns true on success,
 	// or false if the mutex was closed.
 	Lock() bool
-	
+
 	// LockPoll attempts to acquire the mutex and returns false immediately if it is not available.
 	LockPoll() bool
-	
+
 	// LockFor attempts to acquire the lock for at least *millis* milliseconds, and returns true
 	// if successful.
 	LockFor(millis int) bool
-	
+
 	// Unlock releases the mutex if it is locked.  It always returns true.
 	Unlock() bool
 }
