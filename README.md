@@ -1,139 +1,10 @@
 # sync
-### High-level concurrency for Go.
-
-       This project is in early development
-
 --
     import "github.com/dtromb/sync"
 
+     This project is in early development.
 
 ## Usage
-
-#### type ChannelMutex
-
-```go
-type ChannelMutex struct {
-}
-```
-
-
-#### func (*ChannelMutex) Lock
-
-```go
-func (m *ChannelMutex) Lock() bool
-```
-
-#### func (*ChannelMutex) LockFor
-
-```go
-func (m *ChannelMutex) LockFor(millis int) bool
-```
-
-#### func (*ChannelMutex) LockPoll
-
-```go
-func (m *ChannelMutex) LockPoll() bool
-```
-
-#### func (*ChannelMutex) Unlock
-
-```go
-func (m *ChannelMutex) Unlock() bool
-```
-
-#### type ChannelMutexPair
-
-```go
-type ChannelMutexPair struct {
-}
-```
-
-
-#### func (*ChannelMutexPair) Both
-
-```go
-func (cmp *ChannelMutexPair) Both() Mutex
-```
-
-#### func (*ChannelMutexPair) Left
-
-```go
-func (cmp *ChannelMutexPair) Left() Mutex
-```
-
-#### func (*ChannelMutexPair) Lock
-
-```go
-func (cmp *ChannelMutexPair) Lock() bool
-```
-
-#### func (*ChannelMutexPair) LockFor
-
-```go
-func (cmp *ChannelMutexPair) LockFor(millis int) bool
-```
-
-#### func (*ChannelMutexPair) LockPoll
-
-```go
-func (cmp *ChannelMutexPair) LockPoll() bool
-```
-
-#### func (*ChannelMutexPair) Right
-
-```go
-func (cmp *ChannelMutexPair) Right() Mutex
-```
-
-#### func (*ChannelMutexPair) TimedLock
-
-```go
-func (cmp *ChannelMutexPair) TimedLock(tc <-chan time.Time) bool
-```
-
-#### func (*ChannelMutexPair) Unlock
-
-```go
-func (cmp *ChannelMutexPair) Unlock() bool
-```
-
-#### type ChannelMutexPairSingleSide
-
-```go
-type ChannelMutexPairSingleSide struct {
-}
-```
-
-
-#### func (*ChannelMutexPairSingleSide) Lock
-
-```go
-func (ss *ChannelMutexPairSingleSide) Lock() bool
-```
-
-#### func (*ChannelMutexPairSingleSide) LockFor
-
-```go
-func (ss *ChannelMutexPairSingleSide) LockFor(millis int) bool
-```
-
-#### func (*ChannelMutexPairSingleSide) LockPoll
-
-```go
-func (ss *ChannelMutexPairSingleSide) LockPoll() bool
-```
-
-#### func (*ChannelMutexPairSingleSide) TimedLock
-
-```go
-func (ss *ChannelMutexPairSingleSide) TimedLock(tc <-chan time.Time) bool
-```
-
-#### func (*ChannelMutexPairSingleSide) Unlock
-
-```go
-func (ss *ChannelMutexPairSingleSide) Unlock() bool
-```
 
 #### type Monitor
 
@@ -167,19 +38,33 @@ type MonitorWait interface {
 
 ```go
 type Mutex interface {
+
+	// Lock attempts to block indefinitely until the mutex can lock.  Returns true on success,
+	// or false if the mutex was closed.
 	Lock() bool
+
+	// LockPoll attempts to acquire the mutex and returns false immediately if it is not available.
 	LockPoll() bool
+
+	// LockFor attempts to acquire the lock for at least *millis* milliseconds, and returns true
+	// if successful.
 	LockFor(millis int) bool
+
+	// Unlock releases the mutex if it is locked.  It always returns true.
 	Unlock() bool
 }
 ```
 
+Mutex is a pollable, waitable mutual exclusion facility. It is non-re-entrant
+and does not check release callers.
 
 #### func  OpenMutex
 
 ```go
 func OpenMutex() Mutex
 ```
+OpenMutex opens a single Mutex implementation backed by channel-based
+concurrency.
 
 #### type MutexPair
 
@@ -191,12 +76,18 @@ type MutexPair interface {
 }
 ```
 
+MutexPair is a pair of mutexes that can be locked/unlocked atomically. It is
+presented as a triple of Mutex interfaces that operate on nonempty subsets of
+the pair.
 
 #### func  OpenMutexPair
 
 ```go
 func OpenMutexPair() MutexPair
 ```
+OpenMutexPair opens a MutexPair implementation backed by channel-based
+concurrency. It spawns a single goroutine which coordinates atomic operations
+without retry.
 
 #### type Signal
 

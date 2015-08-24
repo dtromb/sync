@@ -4,32 +4,47 @@ import (
 	"time"
 )
 
+// Mutex is a pollable, waitable mutual exclusion facility.  It is non-re-entrant
+// and does not check release callers.
 type Mutex interface {
+	
+	// Lock attempts to block indefinitely until the mutex can lock.  Returns true on success,
+	// or false if the mutex was closed.
 	Lock() bool
+	
+	// LockPoll attempts to acquire the mutex and returns false immediately if it is not available.
 	LockPoll() bool
+	
+	// LockFor attempts to acquire the lock for at least *millis* milliseconds, and returns true
+	// if successful.
 	LockFor(millis int) bool
+	
+	// Unlock releases the mutex if it is locked.  It always returns true.
 	Unlock() bool
 }
 
+// MutexPair is a pair of mutexes that can be locked/unlocked atomically.  It is
+// presented as a triple of Mutex interfaces that operate on nonempty subsets of the pair.
 type MutexPair interface {
 	Left() Mutex
 	Right() Mutex
 	Both() Mutex
 }
 
-type ChannelMutex struct {
+type channelMutex struct {
 	lock   chan bool
 	closed bool
 }
 
+// OpenMutex opens a single Mutex implementation backed by channel-based concurrency.
 func OpenMutex() Mutex {
-	m := ChannelMutex{
+	m := channelMutex{
 		lock: make(chan bool, 1),
 	}
 	return &m
 }
 
-func (m *ChannelMutex) Lock() bool {
+func (m *channelMutex) Lock() bool {
 	m.lock <- true
 	if m.closed {
 		return false
@@ -37,7 +52,7 @@ func (m *ChannelMutex) Lock() bool {
 	return true
 }
 
-func (m *ChannelMutex) LockPoll() bool {
+func (m *channelMutex) LockPoll() bool {
 	select {
 	case m.lock <- true:
 		{
@@ -53,7 +68,7 @@ func (m *ChannelMutex) LockPoll() bool {
 	return false
 }
 
-func (m *ChannelMutex) LockFor(millis int) bool {
+func (m *channelMutex) LockFor(millis int) bool {
 	if millis <= 0 {
 		return m.LockPoll()
 	}
@@ -73,7 +88,7 @@ func (m *ChannelMutex) LockFor(millis int) bool {
 	return false
 }
 
-func (m *ChannelMutex) Unlock() bool {
+func (m *channelMutex) Unlock() bool {
 	select {
 	case _, ok := <-m.lock:
 		{
@@ -89,7 +104,7 @@ func (m *ChannelMutex) Unlock() bool {
 	return false
 }
 
-type ChannelMutexPair struct {
+type channelMutexPair struct {
 	lock   Mutex
 	aSig   chan bool
 	bSig   chan bool
@@ -100,8 +115,10 @@ type ChannelMutexPair struct {
 	closed bool
 }
 
+// OpenMutexPair opens a MutexPair implementation backed by channel-based concurrency.
+// It spawns a single goroutine which coordinates atomic operations without retry.
 func OpenMutexPair() MutexPair {
-	mp := &ChannelMutexPair{
+	mp := &channelMutexPair{
 		lock:   OpenMutex(),
 		aSig:   make(chan bool, 1),
 		bSig:   make(chan bool, 1),
@@ -223,26 +240,26 @@ func OpenMutexPair() MutexPair {
 	return mp
 }
 
-type ChannelMutexPairSingleSide struct {
-	cmp  *ChannelMutexPair
+type channelMutexPairSingleSide struct {
+	cmp  *channelMutexPair
 	side bool
 }
 
-func (ss *ChannelMutexPairSingleSide) Lock() bool {
+func (ss *channelMutexPairSingleSide) Lock() bool {
 	return ss.TimedLock(nil)
 }
 
-func (ss *ChannelMutexPairSingleSide) LockFor(millis int) bool {
+func (ss *channelMutexPairSingleSide) LockFor(millis int) bool {
 	return ss.TimedLock(time.NewTimer(time.Millisecond * time.Duration(millis)).C)
 }
 
-func (ss *ChannelMutexPairSingleSide) LockPoll() bool {
+func (ss *channelMutexPairSingleSide) LockPoll() bool {
 	c := make(chan time.Time, 1)
 	c <- time.Now()
 	return ss.TimedLock(c)
 }
 
-func (ss *ChannelMutexPairSingleSide) TimedLock(tc <-chan time.Time) bool {
+func (ss *channelMutexPairSingleSide) TimedLock(tc <-chan time.Time) bool {
 	var sig, singleFree chan bool
 	if ss.side {
 		sig = ss.cmp.bSig
@@ -275,7 +292,7 @@ func (ss *ChannelMutexPairSingleSide) TimedLock(tc <-chan time.Time) bool {
 	}
 }
 
-func (ss *ChannelMutexPairSingleSide) Unlock() bool {
+func (ss *channelMutexPairSingleSide) Unlock() bool {
 	if ss.side {
 		ss.cmp.bSig <- false
 	} else {
@@ -284,39 +301,39 @@ func (ss *ChannelMutexPairSingleSide) Unlock() bool {
 	return true
 }
 
-func (cmp *ChannelMutexPair) Left() Mutex {
-	return &ChannelMutexPairSingleSide{
+func (cmp *channelMutexPair) Left() Mutex {
+	return &channelMutexPairSingleSide{
 		cmp:  cmp,
 		side: false,
 	}
 }
 
-func (cmp *ChannelMutexPair) Right() Mutex {
-	return &ChannelMutexPairSingleSide{
+func (cmp *channelMutexPair) Right() Mutex {
+	return &channelMutexPairSingleSide{
 		cmp:  cmp,
 		side: true,
 	}
 }
 
-func (cmp *ChannelMutexPair) Both() Mutex {
+func (cmp *channelMutexPair) Both() Mutex {
 	return cmp
 }
 
-func (cmp *ChannelMutexPair) Lock() bool {
+func (cmp *channelMutexPair) Lock() bool {
 	return cmp.TimedLock(nil)
 }
 
-func (cmp *ChannelMutexPair) LockFor(millis int) bool {
+func (cmp *channelMutexPair) LockFor(millis int) bool {
 	return cmp.TimedLock(time.NewTimer(time.Millisecond * time.Duration(millis)).C)
 }
 
-func (cmp *ChannelMutexPair) LockPoll() bool {
+func (cmp *channelMutexPair) LockPoll() bool {
 	c := make(chan time.Time, 1)
 	c <- time.Now()
 	return cmp.TimedLock(c)
 }
 
-func (cmp *ChannelMutexPair) TimedLock(tc <-chan time.Time) bool {
+func (cmp *channelMutexPair) TimedLock(tc <-chan time.Time) bool {
 	select {
 	case _, ok := <-cmp.abFree:
 		{
@@ -333,7 +350,7 @@ func (cmp *ChannelMutexPair) TimedLock(tc <-chan time.Time) bool {
 	}
 }
 
-func (cmp *ChannelMutexPair) Unlock() bool {
+func (cmp *channelMutexPair) Unlock() bool {
 	cmp.abSig <- false
 	return true
 }
