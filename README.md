@@ -2,7 +2,7 @@
 --
     import "github.com/dtromb/sync"
 
-
+### High-level concurrency for Go.
 
      This project is in early development.
 
@@ -46,14 +46,23 @@ type Monitor interface {
 }
 ```
 
-Monitor provides an implementation of an Aquire/Wait/Notify pattern. It is
-re-entrant (recursive mutex functionality), pollable/timable, and transferable.
+Monitor provides an implementation of an Acquire/Wait/Notify concurrency
+pattern. It is re-entrant (recursive mutex functionality), pollable/timable, and
+transferable.
 
-Please note that dispite the superficial similarity there are important
+Please note that despite the superficial similarity there are important
 differences between Java-style monitors and this interface. In particular,
 Monitor is not in any way bound to the callers goroutine / thread, and
 **interrupted waits will not resume with the monitor acquired** but must be
 explicitly re-entered.
+
+#### func  OpenMonitor
+
+```go
+func OpenMonitor() Monitor
+```
+OpenMonitor creates a Monitor backed by channel concurrency with goroutine
+'daemon' providing synchronization.
 
 #### type MonitorWait
 
@@ -62,20 +71,25 @@ type MonitorWait interface {
 
 	// Atomically release the monitor and enter a wait state.  Will return
 	// true after a successful notify/re-acquire, or false if interrupted.
+	// The monitor is held on exit iff the return value is true.
 	Wait() bool
 
 	// Atomically release the monitor and enter a wait state for at least
-	// *millis* milliseconds.  Will return false if a notify/reacquire does
-	// not occur, or interupted before the time elapses.
+	// *millis* milliseconds.  Will return false if a notify/timeout and
+	// reacquire does not occur, or interupted before the time elapses.
+	// The monitor is held on exit iff the second return value is true.  The
+	// wait exited via a notify (and not a timeout, in particular) iff the
+	// first return value is true.
 	WaitFor(millis int) (bool, bool)
 
 	// Atomically release the monitor and immediately re-acquire it.  If other
 	// acquires are in progress, the winner will be pseudo-randomly chosen.
+	// The monitor is held iff the return value is true.
 	Yield() bool
 
 	// Release the monitor.  No further calls on this object will succeed after
 	// this.  Returns true if successful, false if the monitor was already
-	// released.
+	// released.  The monitor is not held by the wait on exit.
 	Release() bool
 
 	// Interrupt any pending wait state or reacquire operation for this
