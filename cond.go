@@ -1,7 +1,6 @@
 package sync
 
 import (
-	"fmt"
 	"time"
 	"errors"
 )
@@ -18,13 +17,17 @@ type Cond struct {
 	tl *waitList
 }
 
+func (c *Cond) Mutex() *Mutex {
+	return c.m
+}
+
 func (c *Cond) Wait(key *MutexKey) error {
-	if key == nil {
-		fmt.Println("WAIT <nil>")
-	} else {
-		fmt.Printf("WAIT <%s>\n", key.debugStackEnt)
-	}
 	<-c.m.lock
+	if key == nil {
+		log.Debugf("Wait() on conditon %p:%p with nil key", c, c.m)
+	} else {
+		log.Debugf("Wait() on condition %p:%p with key %s", c, c.m, key.debugStackEnt)
+	}
 	defer func() { 
 		select{
 			case c.m.lock <- true:
@@ -37,12 +40,14 @@ func (c *Cond) Wait(key *MutexKey) error {
 	if key.m != c.m {
 		return errors.New("incorrect mutex key context")
 	}
-	if key.m.owner.id != key.id {
+	if key.m.owner == nil || key.m.owner.id != key.id {
 		return errors.New("key is not the mutex locker")
 	}
 	key.waiting = true
 	key.m.owner = nil
+	log.Debugf(" Wait() clearing mutex")
 	<-key.m.ownerLock
+	log.Debugf(" Wait() done clearing mutex")
 	wl := &waitList{key:key}
 	key.wl = wl
 	if c.hd == nil {
@@ -53,16 +58,21 @@ func (c *Cond) Wait(key *MutexKey) error {
 	}
 	c.tl = wl
 	if key.signal == nil {
+		log.Debugf(" Wait() created new signal channel")
 		key.signal = make(chan bool, 1)
 	}
 	wl.active = true
+	log.Debugf(" Wait() releasing mutex guard")
 	c.m.lock <- true
+	log.Debugf(" Wait() sleeping until signalled")
 	<-key.signal
+	log.Debugf(" Wait() woke, getting lock back")
 	resume := key.count
 	key.count = 0
 	c.m.Lock(key)
 	key.count = resume
 	key.waiting = false
+	log.Debugf(" Wait() resumed %d entries; finishing with locked %p", key.count, c.m)
 	return nil
 }
 

@@ -4,7 +4,18 @@ import (
 	"fmt"
 	"runtime"
 	"time"
+	logger "github.com/dtromb/log"
 )
+
+type Keyable interface {
+	Key(key *MutexKey) interface{}
+}
+
+type Keyed interface {
+	GetKey() *MutexKey
+}
+
+var mutexLog logger.Log = logger.Logger("mutex")
 
 // MutexKey represents a single locker's association with a Mutex.  Users 
 // may use MutexKey one-per-goroutine, analogous to thread-based locking,
@@ -24,23 +35,26 @@ var NewKey *MutexKey = nil
 // Mutex is a keyed, re-entrant mutual exclusion lock that can be 
 // multiplexed with other concurrency features.
 type Mutex struct {
-	lock chan bool
-	ownerLock chan *MutexKey
-	owner *MutexKey
-	nextId uint32
+	lock chan bool					// A once-buffered guard that is temporarily empty during operations - implements simple critical section.
+	ownerLock chan *MutexKey			// If locked, this once-buffered channel contains the locking key in the buffer.
+	owner *MutexKey					// If locked, this is the key in the ownerLock buffer.
+	nextId uint32					// The next Id that will be used in a new mutex key.
 }
 
 // Create a new mutex.
 func NewMutex() *Mutex {
+	// Create a new mutex.
 	m := &Mutex{
 		nextId: 100,
 		lock: make(chan bool, 1),
 		ownerLock: make(chan *MutexKey, 1),
 	}
+	// Fill the guard so that the critical section can be entered.
 	m.lock <- true
 	return m
 }
 
+// Release all locks held by the mutex key.
 func releaseMutex(x *MutexKey) {
 	if x.m != nil {
 		<-x.m.lock
@@ -57,23 +71,36 @@ func (m *Mutex) CreateCond() *Cond {
 	return &Cond{m: m}
 }
 
+// Create and return a new mutex key.   The mutex guard must be
+// owned by the caller.
+func (m *Mutex) createKey(trace bool) *MutexKey {
+	debugStackEnt := ""
+	if trace {
+		_, file, line, _ := runtime.Caller(1)
+		debugStackEnt = fmt.Sprintf("%s:%d", file, line)
+	}
+	newKey := &MutexKey{m:m, id: m.nextId, debugStackEnt: debugStackEnt}
+	runtime.SetFinalizer(newKey, releaseMutex)
+	m.nextId++
+	return newKey
+}
+
 // Creates a new MutexKey that may be used with this mutex.
 func (m *Mutex) NewKey() *MutexKey {
 	<-m.lock
 	defer func() { m.lock <- true }()
-	_, file, line, _ := runtime.Caller(1)
-	debugStackEnt := fmt.Sprintf("%s:%d", file, line)
-	newKey := &MutexKey{m:m, id: m.nextId, debugStackEnt: debugStackEnt}
-	fmt.Printf(" - new key for caller %s\n", debugStackEnt)
-	runtime.SetFinalizer(newKey, releaseMutex)
-	m.nextId++
-	return newKey
+	return m.createKey(true)
 }
 
 // Blocks until the MutexKey acquires the mutex.  Call with the constant
 // NewKey to generate a new mutex key.   Returns the key.
 func (m *Mutex) Lock(k *MutexKey) *MutexKey {
 	<-m.lock
+	if k == NewKey {
+		mutexLog.Debugf("Lock() %p by new key", m)
+	} else {
+		mutexLog.Debugf("Lock() %p by key %s", m, k.debugStackEnt)
+	}
 	defer func() { 
 		select {
 			case m.lock <- true:
@@ -81,21 +108,15 @@ func (m *Mutex) Lock(k *MutexKey) *MutexKey {
 		}
 	}()
 	if k != nil && k.m != m {
-		panic("foreign mutex key")
+		panic("foreign mutex key passed to Lock()")
 	}
-	if k != nil && (k.id != 0 || (m.owner != nil && k.id == m.owner.id)) {
+	if k != nil && k.id != 0 && m.owner != nil && k.id == m.owner.id {
 		k.count++
 		return k
 	}
 	if k == nil || k.id == 0 {
-		// DEBUG
-		// _, file, line, _ := runtime.Caller(1)
-		// debugStackEnt := fmt.Sprintf("%s:%d", file, line)
-		// k = &MutexKey{m:m, id: m.nextId, debugStackEnt: debugStackEnt}
-		// fmt.Printf(" - new key for caller %s\n", debugStackEnt)
-		k = &MutexKey{m:m, id: m.nextId}
-		runtime.SetFinalizer(k, releaseMutex)
-		m.nextId++
+		k = m.createKey(true)
+		mutexLog.Debugf("   created new key %s", k.debugStackEnt)
 	}
 	k.count = 0
 	m.lock <- true
@@ -122,7 +143,7 @@ func (m *Mutex) LockWait(k *MutexKey, wait time.Duration) (*MutexKey,bool) {
 	if k != nil && k.m != m {
 		panic("foreign mutex key")
 	}
-	if (k != nil && k.id != 0) || (m.owner != nil && k.id == m.owner.id) {
+	if k != nil && k.id != 0 && m.owner != nil && k.id == m.owner.id {
 		k.count++
 		return k, true
 	}
@@ -154,6 +175,11 @@ func (m *Mutex) LockWait(k *MutexKey, wait time.Duration) (*MutexKey,bool) {
 // true if successful.
 func (m *Mutex) Unlock(k *MutexKey) bool {
 	<-m.lock
+	if k != nil && k.debugStackEnt != "" {
+		mutexLog.Debugf("Unlock() %p by key %s", m, k.debugStackEnt)
+	} else {
+		mutexLog.Debugf("Unlock() %p by unknown or invalid key", m)
+	}
 	defer func() { 
 		select {
 			case m.lock <- true:
